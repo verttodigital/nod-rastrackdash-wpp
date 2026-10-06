@@ -203,7 +203,9 @@ export class ReportSyncRepository {
           const entries = Object.values(parts)
             .flat()
             .map((e) => ({
-              ...e,
+              // JSONB does not preserve HTTP object-key insertion order.
+              // Rebuild the manifest wire shape explicitly for every part.
+              sourceLeadId: e.sourceLeadId,
               stages: [...new Set(e.stages)].sort(
                 (a, b) => stages.indexOf(a) - stages.indexOf(b),
               ),

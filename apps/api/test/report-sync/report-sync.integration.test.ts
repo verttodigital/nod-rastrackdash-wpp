@@ -288,18 +288,61 @@ describe("report sync authenticated durable vertical flow", () => {
     ).rejects.toThrow("intent_payload_conflict");
     expect(h.db.reportSyncStage.rows.size).toBe(1);
   });
-  it('rejects a different timestamp for a consumed semantic stage before persisting the next publication',async()=>{
-    const h=harness(),p=payload();const a=await h.service.accept(p,intentKey(p));await h.service.process(a.syncId);
-    h.db.reportSyncStage.rows.get(stageKey(config,'sourceLead','n1')).status='delivered';
-    const corrected:SyncIntent={...p,publication:{...p.publication,id:'pub2',version:2},transitions:[{...p.transitions[0]!,occurredAt:'2026-10-06T12:45:00.000Z'}]};
-    await expect(h.service.accept(corrected,intentKey(corrected))).rejects.toThrow('semantic_stage_timestamp_conflict');expect(h.db.reportSyncIntent.rows.size).toBe(1);
+  it("rejects a different timestamp for a consumed semantic stage before persisting the next publication", async () => {
+    const h = harness(),
+      p = payload();
+    const a = await h.service.accept(p, intentKey(p));
+    await h.service.process(a.syncId);
+    h.db.reportSyncStage.rows.get(stageKey(config, "sourceLead", "n1")).status =
+      "delivered";
+    const corrected: SyncIntent = {
+      ...p,
+      publication: { ...p.publication, id: "pub2", version: 2 },
+      transitions: [
+        { ...p.transitions[0]!, occurredAt: "2026-10-06T12:45:00.000Z" },
+      ],
+    };
+    await expect(
+      h.service.accept(corrected, intentKey(corrected)),
+    ).rejects.toThrow("semantic_stage_timestamp_conflict");
+    expect(h.db.reportSyncIntent.rows.size).toBe(1);
   });
-  it('continues reconciling N1 when a later label blocks, then exposes partial with its acknowledgement',async()=>{
-    const h=harness(),p=payload({finalStage:'n2',transitions:[...payload().transitions,{id:'t2',stage:'n2',occurredAt:'2026-10-06T13:00:00.000Z'}]});
-    const a=await h.service.accept(p,intentKey(p));h.labels.addChatLabel.mockImplementationOnce(async(_w:string,_i:string,_p:string,label:string)=>h.labelState.add(label)).mockRejectedValueOnce(new UazapiLabelOperationError('label_missing',404,null,false));
-    await h.service.process(a.syncId);expect(h.db.reportSyncIntent.rows.get(a.syncId).status).toBe('blocked');expect((await h.service.result(a.syncId)).status).toBe('pending');expect(h.db.reportSyncIntent.rows.get(a.syncId).nextAttemptAt).toBeTruthy();
-    h.db.providerConversionRuleExecution.rows.get('exec-n1').conversionEventLogId='accepted-n1';h.db.conversionEventLog.rows.set('accepted-n1',{id:'accepted-n1',status:'sent',sentAt:new Date(),providerResponseSummary:{events_received:1}});
-    await h.service.process(a.syncId);const result=await h.service.result(a.syncId);expect(result.status).toBe('partial');expect(result.finalLabelVerified).toBe(false);expect(result.transitions[0]!.status).toBe('delivered');
+  it("continues reconciling N1 when a later label blocks, then exposes partial with its acknowledgement", async () => {
+    const h = harness(),
+      p = payload({
+        finalStage: "n2",
+        transitions: [
+          ...payload().transitions,
+          { id: "t2", stage: "n2", occurredAt: "2026-10-06T13:00:00.000Z" },
+        ],
+      });
+    const a = await h.service.accept(p, intentKey(p));
+    h.labels.addChatLabel
+      .mockImplementationOnce(
+        async (_w: string, _i: string, _p: string, label: string) =>
+          h.labelState.add(label),
+      )
+      .mockRejectedValueOnce(
+        new UazapiLabelOperationError("label_missing", 404, null, false),
+      );
+    await h.service.process(a.syncId);
+    expect(h.db.reportSyncIntent.rows.get(a.syncId).status).toBe("blocked");
+    expect((await h.service.result(a.syncId)).status).toBe("pending");
+    expect(h.db.reportSyncIntent.rows.get(a.syncId).nextAttemptAt).toBeTruthy();
+    h.db.providerConversionRuleExecution.rows.get(
+      "exec-n1",
+    ).conversionEventLogId = "accepted-n1";
+    h.db.conversionEventLog.rows.set("accepted-n1", {
+      id: "accepted-n1",
+      status: "sent",
+      sentAt: new Date(),
+      providerResponseSummary: { events_received: 1 },
+    });
+    await h.service.process(a.syncId);
+    const result = await h.service.result(a.syncId);
+    expect(result.status).toBe("partial");
+    expect(result.finalLabelVerified).toBe(false);
+    expect(result.transitions[0]!.status).toBe("delivered");
   });
   it("N1 uses original milliseconds, provider success is not Meta delivery, then recognizes real ledger ack", async () => {
     const h = harness(),
@@ -458,34 +501,108 @@ describe("report sync authenticated durable vertical flow", () => {
     expect(h.labels.addChatLabel).not.toHaveBeenCalled();
     expect(h.conversions.evaluateLabels).not.toHaveBeenCalled();
   });
-  it('429 Retry-After and another conversation rate backlog remain retryable',async()=>{
-    const h=harness(),p=payload();const accepted=await h.service.accept(p,intentKey(p));
-    h.labels.readChatLabels.mockRejectedValueOnce(new UazapiLabelOperationError('rate_limited',429,120000,true));
-    await h.service.process(accepted.syncId);let result=await h.service.result(accepted.syncId);
-    expect(result.status).toBe('pending');expect(result.nextAttemptAt!.getTime()-Date.now()).toBe(120000);
-    vi.spyOn(h.repo,'reserve').mockResolvedValue(120000);await h.service.process(accepted.syncId);result=await h.service.result(accepted.syncId);
-    expect(result.status).toBe('pending');expect(result.reasonCode).toBe('instance_rate_backlog');expect(h.labels.addChatLabel).not.toHaveBeenCalled();
+  it("429 Retry-After and another conversation rate backlog remain retryable", async () => {
+    const h = harness(),
+      p = payload();
+    const accepted = await h.service.accept(p, intentKey(p));
+    h.labels.readChatLabels.mockRejectedValueOnce(
+      new UazapiLabelOperationError("rate_limited", 429, 120000, true),
+    );
+    await h.service.process(accepted.syncId);
+    let result = await h.service.result(accepted.syncId);
+    expect(result.status).toBe("pending");
+    expect(result.nextAttemptAt!.getTime() - Date.now()).toBe(120000);
+    vi.spyOn(h.repo, "reserve").mockResolvedValue(120000);
+    await h.service.process(accepted.syncId);
+    result = await h.service.result(accepted.syncId);
+    expect(result.status).toBe("pending");
+    expect(result.reasonCode).toBe("instance_rate_backlog");
+    expect(h.labels.addChatLabel).not.toHaveBeenCalled();
   });
-  it('a changed rule event or amount blocks before touching labels',async()=>{
-    const h=harness(),p=payload();h.db.providerConversionRuleConfig.findFirst.mockResolvedValue({requiresReportContext:true,conversionRule:{triggerType:'provider_automation',eventName:'Purchase',defaultValueCents:10000,defaultCurrency:'BRL'},channels:[{channel:{whatsappInstanceId:'wa1'}}]});
-    const accepted=await h.service.accept(p,intentKey(p));await h.service.process(accepted.syncId);
-    expect((await h.service.result(accepted.syncId)).reasonCode).toBe('published_rule_mapping_changed');expect(h.labels.addChatLabel).not.toHaveBeenCalled();
+  it("a changed rule event or amount blocks before touching labels", async () => {
+    const h = harness(),
+      p = payload();
+    h.db.providerConversionRuleConfig.findFirst.mockResolvedValue({
+      requiresReportContext: true,
+      conversionRule: {
+        triggerType: "provider_automation",
+        eventName: "Purchase",
+        defaultValueCents: 10000,
+        defaultCurrency: "BRL",
+      },
+      channels: [{ channel: { whatsappInstanceId: "wa1" } }],
+    });
+    const accepted = await h.service.accept(p, intentKey(p));
+    await h.service.process(accepted.syncId);
+    expect((await h.service.result(accepted.syncId)).reasonCode).toBe(
+      "published_rule_mapping_changed",
+    );
+    expect(h.labels.addChatLabel).not.toHaveBeenCalled();
   });
-  it('HTTP 200 without Meta events_received acknowledgement never delivers',async()=>{
-    const h=harness(),p=payload();const accepted=await h.service.accept(p,intentKey(p));await h.service.process(accepted.syncId);
-    h.db.providerConversionRuleExecution.rows.get('exec-n1').conversionEventLogId='empty-ack';h.db.conversionEventLog.rows.set('empty-ack',{id:'empty-ack',status:'sent',sentAt:new Date(),providerResponseSummary:{}});
-    const result=await h.service.result(accepted.syncId);expect(result.status).toBe('pending');expect(result.transitions[0]!.metaAcceptedAt).toBeNull();expect(result.transitions[0]!.reasonCode).toBe('meta_acknowledgement_missing');
+  it("HTTP 200 without Meta events_received acknowledgement never delivers", async () => {
+    const h = harness(),
+      p = payload();
+    const accepted = await h.service.accept(p, intentKey(p));
+    await h.service.process(accepted.syncId);
+    h.db.providerConversionRuleExecution.rows.get(
+      "exec-n1",
+    ).conversionEventLogId = "empty-ack";
+    h.db.conversionEventLog.rows.set("empty-ack", {
+      id: "empty-ack",
+      status: "sent",
+      sentAt: new Date(),
+      providerResponseSummary: {},
+    });
+    const result = await h.service.result(accepted.syncId);
+    expect(result.status).toBe("pending");
+    expect(result.transitions[0]!.metaAcceptedAt).toBeNull();
+    expect(result.transitions[0]!.reasonCode).toBe(
+      "meta_acknowledgement_missing",
+    );
   });
-  it('recovers a missing delivery job only while active and below the persistent request budget',async()=>{
-    const h=harness(),p=payload();const accepted=await h.service.accept(p,intentKey(p));await h.service.process(accepted.syncId);
-    const stage=h.db.reportSyncStage.rows.get(stageKey(config,'sourceLead','n1'));stage.deliveryAttempts=2;
-    h.db.providerConversionRuleExecution.rows.get('exec-n1').status='materialized';h.db.providerConversionRuleExecution.rows.get('exec-n1').conversionEventLogId='paused-event';
-    h.db.conversionEventLog.rows.set('paused-event',{id:'paused-event',status:'error',errorCode:'MetaCapiNetworkError'});
-    const queue:any={getJob:vi.fn(async()=>null),add:vi.fn(async()=>({id:'job'}))};
-    const service=new ReportSyncService(h.repo,h.env,h.labels,h.conversions,queue);
-    h.env.REPORT_SYNC_CONFIG_JSON=JSON.stringify({...config,mode:'paused'});await service.result(accepted.syncId);expect(queue.add).not.toHaveBeenCalled();
-    h.env.REPORT_SYNC_CONFIG_JSON=JSON.stringify(config);await service.result(accepted.syncId);expect(queue.add).toHaveBeenCalledOnce();
-    stage.deliveryAttempts=3;expect((await service.result(accepted.syncId)).status).toBe('partial');expect(queue.add).toHaveBeenCalledOnce();expect(stage.status).toBe('failed');
+  it("recovers a missing delivery job only while active and below the persistent request budget", async () => {
+    const h = harness(),
+      p = payload();
+    const accepted = await h.service.accept(p, intentKey(p));
+    await h.service.process(accepted.syncId);
+    const stage = h.db.reportSyncStage.rows.get(
+      stageKey(config, "sourceLead", "n1"),
+    );
+    stage.deliveryAttempts = 2;
+    h.db.providerConversionRuleExecution.rows.get("exec-n1").status =
+      "materialized";
+    h.db.providerConversionRuleExecution.rows.get(
+      "exec-n1",
+    ).conversionEventLogId = "paused-event";
+    h.db.conversionEventLog.rows.set("paused-event", {
+      id: "paused-event",
+      status: "error",
+      errorCode: "MetaCapiNetworkError",
+    });
+    const queue: any = {
+      getJob: vi.fn(async () => null),
+      add: vi.fn(async () => ({ id: "job" })),
+    };
+    const service = new ReportSyncService(
+      h.repo,
+      h.env,
+      h.labels,
+      h.conversions,
+      queue,
+    );
+    h.env.REPORT_SYNC_CONFIG_JSON = JSON.stringify({
+      ...config,
+      mode: "paused",
+    });
+    await service.result(accepted.syncId);
+    expect(queue.add).not.toHaveBeenCalled();
+    h.env.REPORT_SYNC_CONFIG_JSON = JSON.stringify(config);
+    await service.result(accepted.syncId);
+    expect(queue.add).toHaveBeenCalledOnce();
+    stage.deliveryAttempts = 3;
+    expect((await service.result(accepted.syncId)).status).toBe("partial");
+    expect(queue.add).toHaveBeenCalledOnce();
+    expect(stage.status).toBe("failed");
   });
   it("baseline manifest is verified and consumes prior stages without labels", async () => {
     const h = harness();
@@ -530,6 +647,72 @@ describe("report sync authenticated durable vertical flow", () => {
         entries: [{ sourceLeadId: "changed", stages: ["n1"] }],
       }),
     ).rejects.toThrow("baseline_part_conflict");
+  });
+  it("multipart baseline preserves manifest hash after JSONB reorders persisted entry keys", async () => {
+    const h = harness();
+    h.env.REPORT_SYNC_CONFIG_JSON = JSON.stringify({
+      ...config,
+      mode: "paused",
+    });
+    const source = h.db.reportSyncSource.rows.get("source");
+    Object.assign(source, {
+      activatedAt: null,
+      baselineComplete: false,
+      baselineParts: {},
+    });
+    const entries = [
+      { sourceLeadId: "lead-a", stages: ["n1", "n2"] },
+      { sourceLeadId: "lead-b", stages: ["n1"] },
+    ];
+    const manifest = {
+      entryCount: entries.length,
+      sha256: createHash("sha256")
+        .update(JSON.stringify(entries))
+        .digest("hex"),
+    };
+    const base = {
+      schemaVersion: 1,
+      sourceId: "source",
+      tenantId: "tenant",
+      baselineId: "multipart",
+      cutoverAt: config.cutoverAt,
+      manifest,
+    };
+    expect(
+      (
+        await h.service.baseline({
+          ...base,
+          part: 0,
+          final: false,
+          entries: [entries[0]],
+        })
+      ).status,
+    ).toBe("receiving");
+    // PostgreSQL JSONB returns shorter property names first; the stored part
+    // no longer has the insertion order of the HTTP payload.
+    source.baselineParts = JSON.parse(
+      JSON.stringify({
+        "0": [{ stages: ["n1", "n2"], sourceLeadId: "lead-a" }],
+      }),
+    );
+    expect(Object.keys(source.baselineParts["0"][0])).toEqual([
+      "stages",
+      "sourceLeadId",
+    ]);
+    const final = { ...base, part: 1, final: true, entries: [entries[1]] };
+    expect(await h.service.baseline(final)).toEqual({
+      baselineId: "multipart",
+      status: "complete",
+      ...manifest,
+    });
+    expect(h.db.reportSyncStage.rows.size).toBe(3);
+    expect(await h.service.baseline(final)).toEqual({
+      baselineId: "multipart",
+      status: "complete",
+      ...manifest,
+    });
+    expect(h.labels.addChatLabel).not.toHaveBeenCalled();
+    expect(h.conversions.evaluateLabels).not.toHaveBeenCalled();
   });
   it("crash recovery after the first decision does not reapply the first tag", async () => {
     const h = harness(),
