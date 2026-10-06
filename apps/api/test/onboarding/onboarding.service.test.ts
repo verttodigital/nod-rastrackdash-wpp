@@ -6,6 +6,7 @@ import type { LicenseRuntimeState } from "../../src/licensing-client/license-cli
 import { OnboardingService } from "../../src/onboarding/onboarding.service";
 import type { PrismaService } from "../../src/common/prisma/prisma.service";
 import type { WorkspacesService } from "../../src/workspaces/workspaces.service";
+import { WorkspaceContextService } from "../../src/workspaces/workspace-context.service";
 
 function authenticatedUser(overrides: Partial<AuthenticatedUser> = {}): AuthenticatedUser {
   return {
@@ -45,9 +46,15 @@ function licenseState(overrides: Partial<LicenseRuntimeState> = {}): LicenseRunt
   };
 }
 
-function fakePrisma(overrides: { queryRaw?: () => Promise<unknown> } = {}): PrismaService {
+function fakePrisma(overrides: {
+  queryRaw?: () => Promise<unknown>;
+  manualConnection?: () => Promise<{ id: string } | null>;
+} = {}): PrismaService {
   return {
     $queryRaw: overrides.queryRaw ?? vi.fn().mockResolvedValue([{ "?column?": 1 }]),
+    metaBusinessConnection: {
+      findFirst: vi.fn(overrides.manualConnection ?? (() => Promise.resolve(null))),
+    },
   } as unknown as PrismaService;
 }
 
@@ -90,6 +97,87 @@ function fakeWorkspaces(): WorkspacesService {
 }
 
 describe("OnboardingService", () => {
+  it.each(["platform_owner", "platform_operator"] as const)(
+    "checks the selected support workspace for %s without creating a membership",
+    async (platformRole) => {
+      const user = authenticatedUser({ workspaces: [], activeWorkspaceId: null });
+      user.user.platformRole = platformRole;
+      user.supportContext = {
+        workspaceId: "supported-workspace",
+        workspaceName: "Client",
+        workspaceSlug: "client",
+        startedAt: new Date().toISOString(),
+      };
+      const context = new WorkspaceContextService();
+      const workspaces = {
+        getCurrentWorkspace: (session: AuthenticatedUser) => context.getCurrentWorkspace(session),
+      } as WorkspacesService;
+      const integrations = fakeIntegrations();
+      const service = new OnboardingService(fakePrisma(), fakeLicenseClient(), integrations, workspaces);
+
+      const status = await service.getStatus(user);
+
+      expect(status.completedCount).toBe(4);
+      expect(integrations.getMetaConnection).toHaveBeenCalledWith("supported-workspace");
+      expect(user.workspaces).toEqual([]);
+    },
+  );
+
+  it("does not treat an ordinary user's support-shaped data as workspace access", async () => {
+    const user = authenticatedUser({ workspaces: [], activeWorkspaceId: null });
+    user.supportContext = {
+      workspaceId: "other-workspace", workspaceName: "Other", workspaceSlug: "other",
+      startedAt: new Date().toISOString(),
+    };
+    const integrations = fakeIntegrations();
+    const service = new OnboardingService(fakePrisma(), fakeLicenseClient(), integrations, fakeWorkspaces());
+    const status = await service.getStatus(user);
+    expect(status.completedCount).toBe(2);
+    expect(integrations.getMetaConnection).not.toHaveBeenCalled();
+  });
+
+  it("recognizes an active manual connection without a legacy MetaIntegration row", async () => {
+    const prisma = fakePrisma({ manualConnection: async () => ({ id: "manual-business" }) });
+    const service = new OnboardingService(prisma, fakeLicenseClient(), fakeIntegrations("not_connected"), fakeWorkspaces());
+    const before = new Date();
+    const status = await service.getStatus(authenticatedUser());
+    const after = new Date();
+    expect(status.checks.metaConnected).toBe(true);
+    expect(status.completedCount).toBe(4);
+    const query = vi.mocked(prisma.metaBusinessConnection.findFirst).mock.calls[0]?.[0];
+    expect(query).toMatchObject({
+      where: {
+        workspaceId: "workspace-1", status: "active",
+        credential: {
+          workspaceId: "workspace-1", source: "manual", status: "active",
+          OR: [{ expiresAt: null }, { expiresAt: { gt: expect.any(Date) } }],
+        },
+      },
+      select: { id: true },
+    });
+    const expiresAfter = (query?.where?.credential as { OR: [{ expiresAt: null }, { expiresAt: { gt: Date } }] }).OR[1].expiresAt.gt;
+    expect(expiresAfter.getTime()).toBeGreaterThanOrEqual(before.getTime());
+    expect(expiresAfter.getTime()).toBeLessThanOrEqual(after.getTime());
+  });
+
+  it("keeps a valid manual connection visible if the legacy lookup fails", async () => {
+    const integrations = fakeIntegrations();
+    vi.mocked(integrations.getMetaConnection).mockRejectedValue(new Error("legacy unavailable"));
+    const service = new OnboardingService(
+      fakePrisma({ manualConnection: async () => ({ id: "manual-business" }) }),
+      fakeLicenseClient(), integrations, fakeWorkspaces(),
+    );
+    expect((await service.getStatus(authenticatedUser())).checks.metaConnected).toBe(true);
+  });
+
+  it("preserves the legacy connection if the manual lookup fails", async () => {
+    const service = new OnboardingService(
+      fakePrisma({ manualConnection: async () => { throw new Error("manual unavailable"); } }),
+      fakeLicenseClient(), fakeIntegrations(), fakeWorkspaces(),
+    );
+    expect((await service.getStatus(authenticatedUser())).checks.metaConnected).toBe(true);
+  });
+
   it("reports every check as true when everything is healthy", async () => {
     const service = new OnboardingService(
       fakePrisma(),

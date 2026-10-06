@@ -10,7 +10,7 @@ export type OnboardingChecks = {
   licenseActive: boolean;
   /** Best-effort: the current workspace has a connected Meta account. */
   metaConnected: boolean;
-  /** The authenticated user belongs to at least one workspace. */
+  /** The user has a membership or an authenticated platform support workspace. */
   hasWorkspace: boolean;
 };
 
