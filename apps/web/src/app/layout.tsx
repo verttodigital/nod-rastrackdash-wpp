@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import type { CSSProperties, ReactNode } from "react";
 import "../styles/globals.css";
 import "../styles/layout-system.css";
+import "../styles/vertto-brand.css";
 import { getBrandConfig } from "../lib/brand";
 
 const presentationModeBootstrap = `
@@ -34,7 +35,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   } as CSSProperties;
 
   return (
-    <html lang="pt-BR" suppressHydrationWarning style={brandStyle}>
+    <html lang="pt-BR" data-brand-name={brand.name} suppressHydrationWarning style={brandStyle}>
       <head>
         <script
           dangerouslySetInnerHTML={{ __html: presentationModeBootstrap }}

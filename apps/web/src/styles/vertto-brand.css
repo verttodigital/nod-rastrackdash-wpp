@@ -1,0 +1,88 @@
+/* Opt-in identity for this agency; the original theme remains the default. */
+html[data-brand-name="Vertto Tracking"] {
+  --graphite-950: #0a0a0a;
+  --graphite-900: #101010;
+  --graphite-850: #141414;
+  --graphite-800: #1a1a1a;
+  --graphite-700: #242424;
+  --graphite-600: #333333;
+  --mint: var(--brand-primary, #ff3b19);
+  --mint-strong: #ff3b19;
+  --teal: #ff3b19;
+  --brand-accent-rgb: 255, 59, 25;
+  --ink: #ffffff;
+  --ink-soft: #d5d5d5;
+  --ink-muted: #a3a3a3;
+  --border: rgb(255 255 255 / 13%);
+  --border-strong: rgb(255 59 25 / 40%);
+  --surface: rgb(20 20 20 / 96%);
+  --surface-2: rgb(26 26 26 / 96%);
+  --surface-3: rgb(36 36 36 / 90%);
+}
+
+html[data-brand-name="Vertto Tracking"] body {
+  background:
+    linear-gradient(90deg, rgb(255 255 255 / 2%) 1px, transparent 1px),
+    linear-gradient(180deg, rgb(255 255 255 / 2%) 1px, transparent 1px),
+    #0a0a0a;
+  background-size: 40px 40px;
+}
+
+html[data-brand-name="Vertto Tracking"] .sidebar {
+  background: #0a0a0a;
+}
+
+html[data-brand-name="Vertto Tracking"] .mobile-shell-header {
+  background: rgb(10 10 10 / 98%);
+}
+
+html[data-brand-name="Vertto Tracking"] .brand {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+html[data-brand-name="Vertto Tracking"] .brand-copy strong {
+  font-size: 13px;
+  letter-spacing: 0.035em;
+  color: var(--ink-soft);
+}
+
+html[data-brand-name="Vertto Tracking"] .brand-mark-logo {
+  width: 150px;
+  height: auto;
+  aspect-ratio: 787.34 / 210.23;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  object-fit: contain;
+}
+
+@media (min-width: 901px) {
+  html[data-brand-name="Vertto Tracking"] .app-shell[data-sidebar-state="collapsed"] .sidebar .brand {
+    align-items: center;
+  }
+
+  html[data-brand-name="Vertto Tracking"] .app-shell[data-sidebar-state="collapsed"] .sidebar .brand-mark-logo {
+    width: 42px;
+    height: 36px;
+    aspect-ratio: auto;
+  }
+}
+
+html[data-brand-name="Vertto Tracking"] .button.primary,
+html[data-brand-name="Vertto Tracking"] .login-form button[type="submit"] {
+  background: var(--brand-primary, #ff3b19);
+  border-color: var(--brand-primary, #ff3b19);
+  color: #0a0a0a;
+}
+
+html[data-brand-name="Vertto Tracking"] input,
+html[data-brand-name="Vertto Tracking"] select,
+html[data-brand-name="Vertto Tracking"] textarea {
+  background-color: #101010;
+}
+
+html[data-brand-name="Vertto Tracking"] .brand-footer {
+  color: #a3a3a3;
+}
