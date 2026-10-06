@@ -527,7 +527,7 @@ model WhatsappInstance {
   createdAt              DateTime               @default(now())
   updatedAt              DateTime               @updatedAt
 
-  workspace             Workspace                    @relation(fields: [workspaceId], references: [id])
+  workspace             Workspace              @relation(fields: [workspaceId], references: [id])
   leads                 Lead[]
   inboundWebhookChannel InboundWebhookChannel?
   uazapiChatLabelStates UazapiChatLabelState[]
@@ -593,7 +593,6 @@ model AuthActionToken {
   @@index([workspaceId, type, usedAt])
   @@index([type, expiresAt])
 }
-
 
 model WorkspaceInvite {
   id          String                @id @default(cuid())
@@ -919,18 +918,6 @@ model AuditLog {
   @@index([targetType, targetId])
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
 model ConversionRule {
   id                 String                @id @default(cuid())
   workspaceId        String
@@ -957,6 +944,7 @@ model ConversionRule {
 }
 
 model ProviderConversionRuleConfig {
+  requiresReportContext Boolean                               @default(false)
   id                    String                                @id @default(cuid())
   workspaceId           String
   conversionRuleId      String
@@ -971,18 +959,19 @@ model ProviderConversionRuleConfig {
   createdAt             DateTime                              @default(now())
   updatedAt             DateTime                              @updatedAt
 
-  workspace       Workspace                            @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
-  conversionRule  ConversionRule                       @relation(fields: [workspaceId, conversionRuleId], references: [workspaceId, id], onDelete: Restrict, map: "ProviderConversionRuleConfig_conversionRuleId_fkey")
-  connection      InboundWebhookConnection             @relation(fields: [workspaceId, connectionId], references: [workspaceId, id], onDelete: Restrict, map: "ProviderConversionRuleConfig_connectionId_fkey")
-  parserRelease   InboundWebhookParserRelease          @relation(fields: [parserReleaseId], references: [id], onDelete: Restrict)
-  createdBy       User?                                @relation("ProviderConversionRuleCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
-  channels        ProviderConversionRuleChannel[]
-  endpoint        ProviderConversionRuleEndpoint?
-  catalog         ConversionCatalog?
-  executions      ProviderConversionRuleExecution[]
-  decisions       ProviderConversionDecisionAudit[]
-  comparisons     ProviderConversionShadowComparison[]
-  purchaseReviews PurchaseReview[]
+  workspace         Workspace                            @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  conversionRule    ConversionRule                       @relation(fields: [workspaceId, conversionRuleId], references: [workspaceId, id], onDelete: Restrict, map: "ProviderConversionRuleConfig_conversionRuleId_fkey")
+  connection        InboundWebhookConnection             @relation(fields: [workspaceId, connectionId], references: [workspaceId, id], onDelete: Restrict, map: "ProviderConversionRuleConfig_connectionId_fkey")
+  parserRelease     InboundWebhookParserRelease          @relation(fields: [parserReleaseId], references: [id], onDelete: Restrict)
+  createdBy         User?                                @relation("ProviderConversionRuleCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  channels          ProviderConversionRuleChannel[]
+  endpoint          ProviderConversionRuleEndpoint?
+  catalog           ConversionCatalog?
+  executions        ProviderConversionRuleExecution[]
+  decisions         ProviderConversionDecisionAudit[]
+  comparisons       ProviderConversionShadowComparison[]
+  purchaseReviews   PurchaseReview[]
+  reportSyncBinding ReportSyncBinding?
 
   @@unique([workspaceId, id])
   @@unique([workspaceId, conversionRuleId])
@@ -2183,4 +2172,107 @@ model LicenseState {
   bound            Boolean   @default(false)
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
+}
+
+// Durable publication context; all API access is scoped to its configured source.
+model ReportSyncSource {
+  id               String              @id
+  workspaceId      String
+  tenantId         String
+  cutoverAt        DateTime?
+  baselineId       String?
+  baselineComplete Boolean             @default(false)
+  baselineManifest Json?
+  baselineParts    Json                @default("{}")
+  activatedAt      DateTime?
+  updatedAt        DateTime            @updatedAt
+  intents          ReportSyncIntent[]
+  stages           ReportSyncStage[]
+  bindings         ReportSyncBinding[]
+
+  @@unique([id, workspaceId, tenantId])
+  @@unique([id, workspaceId])
+}
+
+model ReportSyncIntent {
+  id                   String           @id
+  sourceId             String
+  workspaceId          String
+  tenantId             String
+  publicationId        String
+  publicationVersion   Int
+  sourceLeadId         String
+  payloadHash          String
+  encryptedPayload     String
+  payloadIv            String
+  payloadTag           String
+  encryptionKeyVersion Int
+  mode                 String
+  status               String           @default("pending")
+  reasonCode           String?
+  whatsappInstanceId   String?
+  contactKey           String?
+  finalLabelVerified   Boolean          @default(false)
+  nextAttemptAt        DateTime?
+  attempts             Int              @default(0)
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+  source               ReportSyncSource @relation(fields: [sourceId, workspaceId, tenantId], references: [id, workspaceId, tenantId], onDelete: Restrict)
+
+  @@unique([sourceId, tenantId, publicationId, sourceLeadId])
+  @@index([sourceId, status, nextAttemptAt])
+  @@index([sourceId, sourceLeadId, publicationVersion])
+}
+
+model ReportSyncStage {
+  deliveryAttempts   Int              @default(0)
+  id                 String           @id
+  sourceId           String
+  workspaceId        String
+  tenantId           String
+  sourceLeadId       String
+  stage              String
+  occurredAt         DateTime?
+  intentId           String?
+  whatsappInstanceId String?
+  contactKey         String?
+  labelId            String?
+  providerRuleId     String?
+  status             String           @default("pending")
+  reasonCode         String?
+  executionId        String?
+  conversionEventId  String?
+  metaAcceptedAt     DateTime?
+  updatedAt          DateTime         @updatedAt
+  source             ReportSyncSource @relation(fields: [sourceId, workspaceId, tenantId], references: [id, workspaceId, tenantId], onDelete: Restrict)
+
+  @@unique([sourceId, tenantId, sourceLeadId, stage])
+  @@index([workspaceId, whatsappInstanceId, contactKey, status])
+}
+
+model ReportSyncBinding {
+  id                 String                       @id
+  sourceId           String
+  workspaceId        String
+  whatsappInstanceId String
+  stage              String
+  labelId            String
+  providerRuleId     String                       @unique
+  source             ReportSyncSource             @relation(fields: [sourceId, workspaceId], references: [id, workspaceId], onDelete: Restrict)
+  providerRule       ProviderConversionRuleConfig @relation(fields: [workspaceId, providerRuleId], references: [workspaceId, id], onDelete: Restrict)
+
+  @@unique([sourceId, whatsappInstanceId, stage])
+  @@unique([workspaceId, providerRuleId])
+}
+
+model ReportSyncLease {
+  id        String   @id
+  owner     String
+  expiresAt DateTime
+  version   Int      @default(1)
+}
+
+model ReportSyncRateLimit {
+  id     String   @id
+  nextAt DateTime
 }

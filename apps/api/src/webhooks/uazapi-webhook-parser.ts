@@ -13,6 +13,7 @@ export type ParsedUazapiWebhook = {
   messageText?: string;
   labels: string[];
   waLabelIds: string[];
+  waLabelState: "valid" | "absent" | "invalid";
   labelEventKind: "chat_labels" | "labels_catalog" | "other";
   campaignId?: string;
   adSetId?: string;
@@ -40,6 +41,9 @@ export function parseUazapiWebhook(
     recordValue(referral?.adsContextData);
   const externalAdReply = getExternalAdReply(body, message);
   const phone = getPhone(body, message);
+  const membership = parseUazapiLabelMembership(
+    recordValue(body.chat)?.wa_label,
+  );
 
   return {
     eventType:
@@ -60,7 +64,8 @@ export function parseUazapiWebhook(
     contactName: getContactName(body),
     messageText: getMessageText(body),
     labels: getLabels(body),
-    waLabelIds: getWaLabelIds(body),
+    waLabelIds: membership.labelIds,
+    waLabelState: membership.state,
     campaignId:
       firstString(body.campaignId) ??
       firstString(body.campaign_id) ??
@@ -180,21 +185,30 @@ function getLabels(body: UazapiWebhookBody): string[] {
     .filter((label): label is string => Boolean(label));
 }
 
-function getWaLabelIds(body: UazapiWebhookBody): string[] {
-  const chat = recordValue(body.chat);
-  const labels = chat?.wa_label;
-  const values = Array.isArray(labels)
-    ? labels
-    : labels === undefined
-      ? []
-      : [labels];
-  return [
-    ...new Set(
-      values
-        .map(labelToString)
-        .filter((label): label is string => Boolean(label)),
-    ),
-  ];
+/** Missing or malformed membership must never clear a previously known state. */
+export function parseUazapiLabelMembership(value: unknown): {
+  state: "valid" | "absent" | "invalid";
+  labelIds: string[];
+} {
+  if (value === undefined) return { state: "absent", labelIds: [] };
+  let parsed = value;
+  if (typeof parsed === "string") {
+    try {
+      parsed = JSON.parse(parsed);
+    } catch {
+      return { state: "invalid", labelIds: [] };
+    }
+  }
+  if (
+    !Array.isArray(parsed) ||
+    parsed.some((id) => typeof id !== "string" || !id.trim())
+  ) {
+    return { state: "invalid", labelIds: [] };
+  }
+  return {
+    state: "valid",
+    labelIds: [...new Set(parsed.map((id) => (id as string).trim()))],
+  };
 }
 
 function getLabelEventKind(
@@ -202,6 +216,7 @@ function getLabelEventKind(
 ): ParsedUazapiWebhook["labelEventKind"] {
   const eventType = (
     firstString(body.EventType) ??
+    firstString(body.event) ??
     firstString(body.type) ??
     ""
   ).toLocaleLowerCase("en-US");

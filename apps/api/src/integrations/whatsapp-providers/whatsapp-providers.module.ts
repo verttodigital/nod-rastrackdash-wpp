@@ -8,6 +8,7 @@ import { MetaTokenEncryptionService } from "../meta/meta-token-encryption.servic
 import { UazapiAdapter } from "../uazapi/uazapi.adapter";
 import { NodApiWhatsappAdapter } from "./nod-api-whatsapp.adapter";
 import { UazapiByoAdapter } from "./uazapi-byo.adapter";
+import { UazapiLabelOperationsService } from "./uazapi-label-operations.service";
 import { WahaWhatsappAdapter } from "./waha-whatsapp.adapter";
 import { WhatsappProviderRegistry } from "./whatsapp-provider.registry";
 import { WhatsappProvidersBootstrapService } from "./whatsapp-providers-bootstrap.service";
@@ -54,6 +55,7 @@ export type {
     { provide: INTEGRATION_ENV, useValue: process.env },
     UazapiAdapter,
     UazapiByoAdapter,
+    UazapiLabelOperationsService,
     NodApiWhatsappAdapter,
     WahaWhatsappAdapter,
     ZapiWhatsappAdapter,
@@ -64,6 +66,7 @@ export type {
   ],
   controllers: [WhatsappConnectionsController],
   exports: [
+    UazapiLabelOperationsService,
     WhatsappProviderRegistry,
     UazapiByoAdapter,
     UazapiAdapter,

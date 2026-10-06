@@ -1,7 +1,9 @@
 import "reflect-metadata";
 import { Test } from "@nestjs/testing";
-import { afterAll, beforeAll, describe, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { AppModule } from "../src/app.module";
+import { UazapiLabelOperationsService } from "../src/integrations/whatsapp-providers/uazapi-label-operations.service";
+import { ReportSyncService } from "../src/report-sync/report-sync.service";
 
 describe("AppModule boot", () => {
   const previousWebOrigin = process.env.WEB_ORIGIN;
@@ -20,6 +22,13 @@ describe("AppModule boot", () => {
       imports: [AppModule],
     }).compile();
 
-    await module.close();
+    try {
+      expect(module.get(UazapiLabelOperationsService)).toBeInstanceOf(
+        UazapiLabelOperationsService,
+      );
+      expect(module.get(ReportSyncService)).toBeInstanceOf(ReportSyncService);
+    } finally {
+      await module.close();
+    }
   });
 });

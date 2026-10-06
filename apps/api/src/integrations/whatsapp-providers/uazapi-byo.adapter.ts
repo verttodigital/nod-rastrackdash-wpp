@@ -139,7 +139,19 @@ export class UazapiByoAdapter implements WhatsappProviderAdapter {
   async listLabels(
     instanceRef: string,
     instanceToken?: string | null,
+    config?: WhatsappProviderConfig,
   ): Promise<WhatsappLabelListResult> {
+    if (config) {
+      if (config.provider !== this.id)
+        return {
+          status: "error",
+          message: "Invalid Uazapi connection configuration",
+          labels: [],
+        };
+      return this.uazapi.listLabels(instanceRef, config.config.token, {
+        baseUrl: config.config.baseUrl,
+      });
+    }
     return this.uazapi.listLabels(instanceRef, instanceToken);
   }
 }

@@ -38,11 +38,16 @@ class ExternalChannelBillingAccessStub {
   }
 }
 import { hashPhoneIdentity } from "../common/phone/phone-identity";
+import type { SyncIntent } from '../report-sync/report-sync.contract';
 import { PrismaService } from "../common/prisma/prisma.service";
 import { ConversionEventsQueueService } from "../common/queue/conversion-events-queue.service";
 import type { ProviderConversionProductionJobPayload } from "../common/queue/queue.constants";
 import { RUNTIME_ENV, type RuntimeEnv } from "../common/runtime/runtime.module";
 import { parseInboundWebhooksConfig } from "../config/deployment-config";
+import {
+  readSyncConfig,
+  publishedRuleMatches,
+} from "../report-sync/report-sync.contract";
 import { ConversionCatalogService } from "../conversion-rules/conversion-catalog.service";
 import {
   matchProviderMessageTrigger,
@@ -148,6 +153,42 @@ export class ProviderConversionProductionService {
       throw new ProviderConversionProductionFailure(
         "provider_conversion_execution_not_found",
       );
+    }
+    if (execution.providerRule.requiresReportContext) {
+      const config = readSyncConfig(this.env);
+      const stage = await this.prisma.reportSyncStage.findFirst({
+        where: {
+          workspaceId: execution.workspaceId,
+          providerRuleId: execution.providerRuleId,
+          executionId: execution.id,
+        },
+      });
+      if (
+        !config ||
+        config.mode !== "production" ||
+        config.workspaceId !== execution.workspaceId ||
+        !stage ||
+        !publishedRuleMatches(stage.stage, execution.providerRule) ||
+        stage.sourceId !== config.sourceId ||
+        !stage.occurredAt ||
+        stage.occurredAt.getTime() !== execution.occurredAt.getTime() ||
+        !config.cutoverAt ||
+        stage.occurredAt <= new Date(config.cutoverAt)
+      ) {
+        throw new ProviderConversionProductionFailure(
+          "report_context_not_active",
+          true,
+        );
+      }
+      const intent=stage.intentId?await this.prisma.reportSyncIntent.findUnique({where:{id:stage.intentId}}):null;
+      let published:SyncIntent|null=null;
+      try {if(intent)published=JSON.parse(this.payloadEncryption.decrypt(intent,{workspaceId:intent.workspaceId,connectionId:intent.sourceId,deliveryId:intent.id}).toString('utf8')) as SyncIntent;}catch{/* fail closed below */}
+      const currentLead=execution.leadId?await this.prisma.lead.findFirst({where:{id:execution.leadId,workspaceId:execution.workspaceId}}):null;
+      if(!published || !currentLead || currentLead.adId!==published.lead.adId || currentLead.ctwaClid!==published.lead.ctwaClid || currentLead.whatsappInstanceId!==stage.whatsappInstanceId || currentLead.phoneHash!==stage.contactKey) {
+        await this.prisma.providerConversionRuleExecution.update({where:{id:execution.id},data:{status:'blocked',reasonCode:'report_attribution_changed'}});
+        await this.prisma.reportSyncStage.update({where:{id:stage.id},data:{status:'blocked',reasonCode:'report_attribution_changed'}});
+        return {status:'unchanged'};
+      }
     }
     if (execution.status === "materialized") {
       await this.enqueueMaterialized(execution);
@@ -596,42 +637,39 @@ export class ProviderConversionProductionService {
       }
 
       const occurredAt = new Date(occurrence.occurredAt);
-      const duplicateWhere: Prisma.ProviderConversionRuleExecutionWhereInput =
-        {
-          id: { not: execution.id },
-          workspaceId: execution.workspaceId,
-          status: "materialized",
-          OR: [
-            {
-              providerDecision: {
-                is: {
-                  businessDedupeScopeKey: dedupePolicy.scopeKey,
-                },
+      const duplicateWhere: Prisma.ProviderConversionRuleExecutionWhereInput = {
+        id: { not: execution.id },
+        workspaceId: execution.workspaceId,
+        status: "materialized",
+        OR: [
+          {
+            providerDecision: {
+              is: {
+                businessDedupeScopeKey: dedupePolicy.scopeKey,
               },
             },
-            {
-              providerDecisionId: null,
-              contactIdentityHash: lead.phoneHash,
-              providerRule: {
-                conversionRule: { eventName },
-              },
+          },
+          {
+            providerDecisionId: null,
+            contactIdentityHash: lead.phoneHash,
+            providerRule: {
+              conversionRule: { eventName },
             },
-          ],
-          ...(dedupePolicy.mode === "rolling_window"
-            ? {
-                occurredAt: {
-                  gt: new Date(
-                    occurredAt.getTime() -
-                      dedupePolicy.windowSeconds * 1_000,
-                  ),
-                  lt: new Date(
-                    occurredAt.getTime() +
-                      dedupePolicy.windowSeconds * 1_000,
-                  ),
-                },
-              }
-            : {}),
-        };
+          },
+        ],
+        ...(dedupePolicy.mode === "rolling_window"
+          ? {
+              occurredAt: {
+                gt: new Date(
+                  occurredAt.getTime() - dedupePolicy.windowSeconds * 1_000,
+                ),
+                lt: new Date(
+                  occurredAt.getTime() + dedupePolicy.windowSeconds * 1_000,
+                ),
+              },
+            }
+          : {}),
+      };
       const duplicate =
         await transaction.providerConversionRuleExecution.findFirst({
           where: duplicateWhere,
@@ -1160,8 +1198,7 @@ export class ProviderConversionProductionService {
       audit.occurredAt.getTime() !==
         new Date(parsed.data.occurrence.occurredAt).getTime() ||
       parsed.data.occurrence.workspaceId !== execution.workspaceId ||
-      parsed.data.occurrence.occurrenceKey !==
-        execution.externalExecutionKey ||
+      parsed.data.occurrence.occurrenceKey !== execution.externalExecutionKey ||
       parsed.data.rule.providerRuleId !== execution.providerRuleId ||
       parsed.data.leadResolution.lead.id !== audit.leadId ||
       (execution.leadId !== null &&
@@ -1205,10 +1242,7 @@ export class ProviderConversionProductionService {
     failure: Prisma.InputJsonValue,
     disposition: {
       executionStatus: "blocked" | "failed";
-      state:
-        | "blocked_configuration"
-        | "failed_retryable"
-        | "failed_permanent";
+      state: "blocked_configuration" | "failed_retryable" | "failed_permanent";
       retryable: boolean;
     },
   ): Prisma.InputJsonValue {
@@ -1225,9 +1259,7 @@ export class ProviderConversionProductionService {
     } as Prisma.InputJsonValue;
   }
 
-  private retryableTechnicalFailure(
-    value: Prisma.JsonValue | null,
-  ): boolean {
+  private retryableTechnicalFailure(value: Prisma.JsonValue | null): boolean {
     const normalized = this.jsonObject(value);
     const technicalDelivery = this.jsonObject(
       (normalized?.technicalDelivery ?? null) as Prisma.JsonValue | null,
@@ -1241,10 +1273,7 @@ export class ProviderConversionProductionService {
 
   private failureDisposition(code: string): {
     executionStatus: "blocked" | "failed";
-    state:
-      | "blocked_configuration"
-      | "failed_retryable"
-      | "failed_permanent";
+    state: "blocked_configuration" | "failed_retryable" | "failed_permanent";
     retryable: boolean;
   } {
     if (code.startsWith("external_channel_billing_")) {
