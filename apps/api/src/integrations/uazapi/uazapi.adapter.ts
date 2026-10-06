@@ -298,10 +298,16 @@ export class UazapiAdapter implements IntegrationAdapter {
   async listLabels(
     _instanceRef: string,
     instanceToken?: string | null,
+    connection?: { baseUrl: string },
   ): Promise<UazapiLabelListResult> {
-    const token = this.getInstanceToken(instanceToken);
+    // Explicit connection config is authoritative, including missing values.
+    const token = connection
+      ? instanceToken?.trim()
+      : this.getInstanceToken(instanceToken);
 
-    const configuredBaseUrl = this.env.UAZAPI_BASE_URL?.trim();
+    const configuredBaseUrl = (
+      connection ? connection.baseUrl : this.env.UAZAPI_BASE_URL
+    )?.trim();
     const baseUrl = configuredBaseUrl
       ? normalizeProviderBaseUrl(configuredBaseUrl)
       : null;

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { Inject, Injectable, Logger } from "@nestjs/common";
+import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import type {
   ProviderConversionDecisionDto,
@@ -37,6 +37,13 @@ import {
 } from "./uazapi-conversion-bridge.service";
 import { WhatsappProviderRegistry } from "../integrations/whatsapp-providers/whatsapp-provider.registry";
 import { MetaTokenEncryptionService } from "../integrations/meta/meta-token-encryption.service";
+import { UazapiLabelOperationsService } from "../integrations/whatsapp-providers/uazapi-label-operations.service";
+import {
+  readSyncConfig,
+  publishedRuleMatches,
+} from "../report-sync/report-sync.contract";
+import { InboundWebhookPayloadEncryptionService } from "./inbound-webhook-payload-encryption.service";
+import type { SyncIntent } from "../report-sync/report-sync.contract";
 
 const PARSER_VERSION = "v1";
 
@@ -96,6 +103,8 @@ export type UazapiLabelInput = {
   waChatId?: string;
   externalEventId?: string | null;
   occurredAt?: Date;
+  /** Internal only: persisted, scoped publication stage, never read from webhook input. */
+  reportStageId?: string;
 };
 
 /**
@@ -128,6 +137,12 @@ export class UazapiProviderConversionService {
     private readonly whatsappProviders: WhatsappProviderRegistry,
     @Inject(MetaTokenEncryptionService)
     private readonly tokenEncryption: MetaTokenEncryptionService,
+    @Optional()
+    @Inject(UazapiLabelOperationsService)
+    private readonly labelOperations?: UazapiLabelOperationsService,
+    @Optional()
+    @Inject(InboundWebhookPayloadEncryptionService)
+    private readonly reportPayloadEncryption?: InboundWebhookPayloadEncryptionService,
   ) {}
 
   async evaluateTeamMessage(
@@ -468,7 +483,7 @@ export class UazapiProviderConversionService {
       },
       update: { labelIds },
     });
-    if (newIds.length === 0)
+    if (newIds.length === 0 && !input.reportStageId)
       return { evaluated: false, eligibleExecutionId: null };
 
     const bridged = await this.bridge.ensureBridge(input.instance);
@@ -491,20 +506,55 @@ export class UazapiProviderConversionService {
       workspaceId: input.workspaceId,
       phone,
     });
-    const occurredAt = input.occurredAt ?? new Date();
+    const reportContext = input.reportStageId
+      ? await this.validReportContext(input)
+      : null;
+    if (input.reportStageId && !reportContext)
+      return { evaluated: false, eligibleExecutionId: null };
+    if (
+      reportContext &&
+      (leadResolution.status !== "resolved" ||
+        leadResolution.lead.adId !== reportContext.expectedAdId ||
+        leadResolution.lead.ctwaClid !== reportContext.expectedCtwaClid)
+    )
+      return { evaluated: false, eligibleExecutionId: null };
+    const occurredAt =
+      reportContext?.occurredAt ?? input.occurredAt ?? new Date();
     const externalEventId =
+      reportContext?.id ||
       input.externalEventId?.trim() ||
       this.labelEventId(phone, labelIds, occurredAt);
-    const catalog = await this.listLabelCatalog(input.instance);
+    const catalog = reportContext
+      ? []
+      : await this.listLabelCatalog(input.instance);
     let evaluated = false;
     let eligibleExecutionId: string | null = null;
 
     for (const rule of rules) {
+      if (
+        rule.requiresReportContext &&
+        (!reportContext || reportContext.providerRuleId !== rule.id)
+      )
+        continue;
+      if (
+        reportContext &&
+        (!rule.requiresReportContext ||
+          reportContext.providerRuleId !== rule.id)
+      )
+        continue;
+      if (reportContext && !publishedRuleMatches(reportContext.stage, rule))
+        continue;
       const ruleSnapshot = this.ruleSnapshot(rule, "provider_automation");
-      const matched = this.matchLabels(rule, newIds, catalog);
+      const matched = this.matchLabels(
+        rule,
+        reportContext ? [reportContext.labelId!] : newIds,
+        catalog,
+      );
       if (!matched) continue;
 
-      const occurrenceKey = `uazapi:label:${bridged.channelId}:${rule.id}:${contactKey}:${matched.id}:${externalEventId}`;
+      const occurrenceKey = reportContext
+        ? `report-sync:${reportContext.id}`
+        : `uazapi:label:${bridged.channelId}:${rule.id}:${contactKey}:${matched.id}:${externalEventId}`;
       const decision = this.decisionEngine.evaluate({
         parserVersion: PARSER_VERSION,
         rule: ruleSnapshot,
@@ -552,6 +602,11 @@ export class UazapiProviderConversionService {
       });
       if (orchestration.eligibleExecutionId) {
         eligibleExecutionId = orchestration.eligibleExecutionId;
+        if (reportContext)
+          await this.prisma.reportSyncStage.update({
+            where: { id: reportContext.id },
+            data: { executionId: eligibleExecutionId, status: "awaiting_meta" },
+          });
         await this.productionQueue.enqueueProviderConversion({
           providerConversionExecutionId: eligibleExecutionId,
           workspaceId: input.workspaceId,
@@ -559,6 +614,133 @@ export class UazapiProviderConversionService {
       }
     }
     return { evaluated, eligibleExecutionId };
+  }
+
+  async evaluatePublishedLabels(input: UazapiLabelInput): Promise<void> {
+    const config = readSyncConfig(this.env);
+    if (
+      !config ||
+      config.mode !== "production" ||
+      config.workspaceId !== input.workspaceId ||
+      !config.bindings.some((b) => b.whatsappInstanceId === input.instance.id)
+    )
+      return;
+    const stages = await this.prisma.reportSyncStage.findMany({
+      where: {
+        sourceId: config.sourceId,
+        workspaceId: input.workspaceId,
+        whatsappInstanceId: input.instance.id,
+        contactKey: hashPhoneIdentity(input.phone),
+        labelId: { in: input.labelIds },
+        status: {
+          in: ["label_verified", "decision_recorded", "awaiting_meta"],
+        },
+      },
+    });
+    for (const stage of stages)
+      await this.evaluateLabels({ ...input, reportStageId: stage.id });
+  }
+
+  async resumeReportExecution(stageId: string): Promise<void> {
+    const config = readSyncConfig(this.env);
+    if (!config || config.mode !== "production") return;
+    const stage = await this.prisma.reportSyncStage.findUnique({
+      where: { id: stageId },
+    });
+    if (
+      !stage?.executionId ||
+      stage.sourceId !== config.sourceId ||
+      stage.workspaceId !== config.workspaceId ||
+      stage.status !== "awaiting_meta"
+    )
+      return;
+    await this.productionQueue.enqueueProviderConversion({
+      providerConversionExecutionId: stage.executionId,
+      workspaceId: stage.workspaceId,
+    });
+  }
+
+  private async validReportContext(input: UazapiLabelInput) {
+    const config = readSyncConfig(this.env);
+    if (
+      !config ||
+      config.mode !== "production" ||
+      config.workspaceId !== input.workspaceId
+    )
+      return null;
+    const stage = await this.prisma.reportSyncStage.findUnique({
+      where: { id: input.reportStageId! },
+    });
+    if (
+      !stage ||
+      stage.sourceId !== config.sourceId ||
+      stage.tenantId !== config.tenantId ||
+      stage.workspaceId !== input.workspaceId ||
+      stage.whatsappInstanceId !== input.instance.id ||
+      stage.contactKey !== hashPhoneIdentity(input.phone) ||
+      !stage.labelId ||
+      !input.labelIds.includes(stage.labelId) ||
+      !stage.occurredAt ||
+      !["label_verified", "decision_recorded", "awaiting_meta"].includes(
+        stage.status,
+      ) ||
+      !config.cutoverAt ||
+      stage.occurredAt <= new Date(config.cutoverAt)
+    )
+      return null;
+    const intent = stage.intentId
+      ? await this.prisma.reportSyncIntent.findUnique({
+          where: { id: stage.intentId },
+        })
+      : null;
+    const source = await this.prisma.reportSyncSource.findUnique({
+      where: { id: config.sourceId },
+    });
+    if (
+      !intent ||
+      intent.mode !== "production" ||
+      !source?.baselineComplete ||
+      source.cutoverAt?.toISOString() !==
+        new Date(config.cutoverAt).toISOString()
+    )
+      return null;
+    if (!this.reportPayloadEncryption) return null;
+    let published: SyncIntent;
+    try {
+      published = JSON.parse(
+        this.reportPayloadEncryption
+          .decrypt(intent, {
+            workspaceId: intent.workspaceId,
+            connectionId: intent.sourceId,
+            deliveryId: intent.id,
+          })
+          .toString("utf8"),
+      ) as SyncIntent;
+    } catch {
+      return null;
+    }
+    const lead = await this.prisma.lead.findUnique({
+      where: {
+        workspaceId_phoneHash: {
+          workspaceId: input.workspaceId,
+          phoneHash: hashPhoneIdentity(input.phone)!,
+        },
+      },
+    });
+    if (
+      !lead ||
+      lead.whatsappInstanceId !== input.instance.id ||
+      lead.adId !== published.lead.adId ||
+      lead.ctwaClid !== published.lead.ctwaClid ||
+      hashPhoneIdentity(published.lead.phone ?? undefined) !==
+        hashPhoneIdentity(input.phone)
+    )
+      return null;
+    return {
+      ...stage,
+      expectedAdId: published.lead.adId,
+      expectedCtwaClid: published.lead.ctwaClid,
+    };
   }
 
   private async orchestrate(input: {
@@ -874,6 +1056,22 @@ export class UazapiProviderConversionService {
   private async listLabelCatalog(
     instance: UazapiBridgeInstance,
   ): Promise<Array<{ name: string; keys: string[] }>> {
+    if (this.labelOperations) {
+      const instanceConfig = await this.prisma.whatsappInstance.findUnique({
+        where: { id: instance.id },
+        select: { provider: true, configEncrypted: true },
+      });
+      if (instanceConfig?.provider === "uazapi_byo") {
+        const labels = await this.labelOperations.listCatalog(
+          instance.workspaceId,
+          instance.id,
+        );
+        return labels.map((label) => ({
+          name: label.name.trim(),
+          keys: this.labelKeys(label.id),
+        }));
+      }
+    }
     const uazapiByo = this.whatsappProviders.require("uazapi_byo");
     if (!uazapiByo.listLabels) {
       throw new Error(

@@ -488,7 +488,10 @@ export class WebhooksController {
     return createHash("sha256").update(token).digest("hex");
   }
 
-  private matchesTokenHash(receivedToken: string, expectedHash: string): boolean {
+  private matchesTokenHash(
+    receivedToken: string,
+    expectedHash: string,
+  ): boolean {
     const receivedHash = Buffer.from(this.hashToken(receivedToken), "utf8");
     const storedHash = Buffer.from(expectedHash, "utf8");
 
@@ -1035,7 +1038,7 @@ export class WebhooksController {
     context: VerifiedUazapiContext,
     parsed: ParsedUazapiWebhook,
   ): Promise<void> {
-    if (!parsed.phone) return;
+    if (!parsed.phone || parsed.waLabelState !== "valid") return;
 
     try {
       const instance = await this.prisma.whatsappInstance.findFirst({
@@ -1063,6 +1066,13 @@ export class WebhooksController {
         waChatId: parsed.waChatId,
         externalEventId: parsed.externalEventId,
         occurredAt: new Date(),
+      });
+      await this.uazapiProviderConversion.evaluatePublishedLabels({
+        workspaceId: context.workspaceId,
+        instance,
+        phone: parsed.phone,
+        labelIds: parsed.waLabelIds,
+        waChatId: parsed.waChatId,
       });
     } catch (error) {
       this.logger.error(

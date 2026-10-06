@@ -85,10 +85,13 @@ export interface NodApiManagedInstanceStatusDto {
  */
 export interface WhatsappProviderAdapter {
   readonly id: WhatsappProviderId;
-  getHealth(config?: WhatsappProviderConfig): Promise<WhatsappProviderHealthDto>;
+  getHealth(
+    config?: WhatsappProviderConfig,
+  ): Promise<WhatsappProviderHealthDto>;
   listLabels?(
     instanceRef: string,
     instanceToken?: string | null,
+    config?: WhatsappProviderConfig,
   ): Promise<WhatsappLabelListResult>;
   createManagedInstance?(name?: string): Promise<NodApiManagedInstanceDto>;
   getManagedInstanceStatus?(

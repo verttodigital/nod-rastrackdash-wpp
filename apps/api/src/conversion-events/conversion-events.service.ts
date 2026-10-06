@@ -14,6 +14,13 @@ import type {
   ConversionRuleDto,
 } from "@wpptrack/shared";
 import { PrismaService } from "../common/prisma/prisma.service";
+import { RUNTIME_ENV, type RuntimeEnv } from "../common/runtime/runtime.module";
+import {
+  mapping,
+  publishedRuleMatches,
+  readSyncConfig,
+  type Stage,
+} from "../report-sync/report-sync.contract";
 import { MetaTokenEncryptionService } from "../integrations/meta/meta-token-encryption.service";
 import {
   MetaConnectionResolverService,
@@ -218,6 +225,9 @@ export class ConversionEventsService {
     private readonly metaTokenEncryption: MetaTokenEncryptionService,
     @Optional()
     private readonly connectionResolver?: MetaConnectionResolverService,
+    @Optional()
+    @Inject(RUNTIME_ENV)
+    private readonly runtimeEnv: RuntimeEnv = process.env,
   ) {}
 
   async recordRuleMatches(
@@ -647,10 +657,26 @@ export class ConversionEventsService {
     }
 
     const eventId = log?.eventId ?? log?.dedupeKey ?? null;
-    if (!log || log.status !== "ready_to_send" || !eventId) {
+    const reportStageId = log ? this.reportDeliveryStageId(log) : null;
+    const reportRetry =
+      reportStageId !== null &&
+      log?.status === "error" &&
+      log.errorCode === "MetaCapiNetworkError";
+    if (!log || (log.status !== "ready_to_send" && !reportRetry) || !eventId) {
       return {
         conversionEventLogId: logId,
         workspaceId: null,
+        status: "skipped",
+      };
+    }
+
+    if (
+      reportStageId !== null &&
+      !(await this.reportDeliveryAllowed(log, reportStageId))
+    ) {
+      return {
+        conversionEventLogId: log.id,
+        workspaceId: log.workspaceId,
         status: "skipped",
       };
     }
@@ -674,7 +700,35 @@ export class ConversionEventsService {
 
     const startedAt = new Date();
     const resolvedDestination = await this.resolveDeliveryRoute(log);
-    const result = resolvedDestination.routeError
+    // Route lookup performs I/O. Recheck the live pause and immutable context
+    // at the last boundary before any pilot request reaches Meta.
+    if (reportStageId !== null) {
+      if (!(await this.reportDeliveryAllowed(log, reportStageId))) {
+        return {
+          conversionEventLogId: log.id,
+          workspaceId: log.workspaceId,
+          status: "skipped",
+        };
+      }
+      if (!resolvedDestination.routeError) {
+        const reserved = await this.prisma.reportSyncStage.updateMany({
+          where: {
+            id: reportStageId,
+            workspaceId: log.workspaceId!,
+            status: "awaiting_meta",
+            deliveryAttempts: { lt: 3 },
+          },
+          data: { deliveryAttempts: { increment: 1 } },
+        });
+        if (reserved.count !== 1)
+          return {
+            conversionEventLogId: log.id,
+            workspaceId: log.workspaceId,
+            status: "skipped",
+          };
+      }
+    }
+    let result = resolvedDestination.routeError
       ? {
           status: "not_configured" as const,
           requestPayload: null,
@@ -700,6 +754,21 @@ export class ConversionEventsService {
           eventTime: log.eventOccurredAt,
           testEventCode: options.testEventCode ?? null,
         });
+    if (
+      reportStageId !== null &&
+      result.status === "sent" &&
+      !(
+        typeof result.responseSummary?.events_received === "number" &&
+        result.responseSummary.events_received >= 1
+      )
+    ) {
+      result = {
+        ...result,
+        status: "error",
+        errorCode: "MetaCapiNetworkError",
+        errorMessage: "Meta acknowledgement missing",
+      };
+    }
     const integrationLogId = await this.recordMetaCapiIntegrationLog(
       log,
       startedAt,
@@ -773,6 +842,137 @@ export class ConversionEventsService {
     };
   }
 
+  private reportDeliveryStageId(log: ConversionEventLogRecord): string | null {
+    const payload = log.sourcePayload;
+    if (!payload || typeof payload !== "object" || Array.isArray(payload))
+      return null;
+    const key = payload.occurrenceKey;
+    // An invalid report marker fails closed; it never falls into generic delivery.
+    return typeof key === "string" && key.startsWith("report-sync:")
+      ? key.slice("report-sync:".length)
+      : null;
+  }
+
+  private async reportDeliveryAllowed(
+    log: ConversionEventLogRecord,
+    stageId: string,
+  ): Promise<boolean> {
+    const config = readSyncConfig(this.runtimeEnv);
+    if (
+      !config ||
+      config.mode !== "production" ||
+      !config.cutoverAt ||
+      config.workspaceId !== log.workspaceId ||
+      !/^[a-f0-9]{64}$/u.test(stageId)
+    )
+      return false;
+    const payload = log.sourcePayload as Record<string, Prisma.JsonValue>;
+    if (
+      typeof payload.providerConversionExecutionId !== "string" ||
+      typeof payload.providerRuleId !== "string"
+    )
+      return false;
+    const stage = await this.prisma.reportSyncStage.findUnique({
+      where: { id: stageId },
+    });
+    if (
+      !stage ||
+      stage.sourceId !== config.sourceId ||
+      stage.tenantId !== config.tenantId ||
+      stage.workspaceId !== config.workspaceId ||
+      stage.executionId !== payload.providerConversionExecutionId ||
+      stage.providerRuleId !== payload.providerRuleId ||
+      stage.status !== "awaiting_meta" ||
+      !stage.whatsappInstanceId ||
+      !config.bindings.some(
+        (b) => b.whatsappInstanceId === stage.whatsappInstanceId,
+      ) ||
+      !stage.occurredAt ||
+      stage.occurredAt.getTime() !== log.eventOccurredAt.getTime() ||
+      stage.occurredAt <= new Date(config.cutoverAt) ||
+      stage.contactKey !== log.phoneHash
+    )
+      return false;
+    const ageMs = Date.now() - stage.occurredAt.getTime();
+    if (ageMs < 0 || ageMs > 7 * 86400000) {
+      await this.prisma.reportSyncStage.updateMany({
+        where: {
+          id: stage.id,
+          workspaceId: config.workspaceId,
+          status: "awaiting_meta",
+        },
+        data: {
+          status: "ineligible",
+          reasonCode: "original_event_outside_window",
+        },
+      });
+      return false;
+    }
+    const expected = mapping[stage.stage as Stage];
+    if (
+      !expected ||
+      log.eventName !== expected.eventName ||
+      log.valueCents !== expected.valueCents ||
+      log.currency !== (expected.valueCents === null ? null : "BRL") ||
+      log.valueSource !==
+        (expected.valueCents === null ? null : "configured_average")
+    )
+      return false;
+    const source = await this.prisma.reportSyncSource.findUnique({
+      where: { id: config.sourceId },
+    });
+    if (
+      !source ||
+      source.workspaceId !== config.workspaceId ||
+      source.tenantId !== config.tenantId ||
+      !source.baselineComplete ||
+      source.cutoverAt?.toISOString() !==
+        new Date(config.cutoverAt).toISOString()
+    )
+      return false;
+    const execution =
+      await this.prisma.providerConversionRuleExecution.findFirst({
+        where: {
+          id: stage.executionId,
+          workspaceId: config.workspaceId,
+          providerRuleId: stage.providerRuleId,
+        },
+        include: { providerRule: { include: { conversionRule: true } } },
+      });
+    if (
+      !execution ||
+      execution.conversionEventLogId !== log.id ||
+      execution.status !== "materialized" ||
+      execution.occurredAt.getTime() !== stage.occurredAt.getTime() ||
+      !execution.providerRule.requiresReportContext ||
+      execution.providerRule.mode !== "production" ||
+      execution.providerRule.removedAt !== null ||
+      !execution.providerRule.conversionRule.active
+    )
+      return false;
+    if (!publishedRuleMatches(stage.stage, execution.providerRule))
+      return false;
+    const binding = await this.prisma.reportSyncBinding.findFirst({
+      where: {
+        sourceId: config.sourceId,
+        workspaceId: config.workspaceId,
+        whatsappInstanceId: stage.whatsappInstanceId,
+        stage: stage.stage,
+        providerRuleId: stage.providerRuleId,
+      },
+    });
+    // Configuration may have changed while the database lookups were pending.
+    const live = readSyncConfig(this.runtimeEnv);
+    return Boolean(
+      binding &&
+      live?.mode === "production" &&
+      live.sourceId === config.sourceId &&
+      live.tenantId === config.tenantId &&
+      live.workspaceId === config.workspaceId &&
+      live.cutoverAt === config.cutoverAt,
+    );
+  }
+
   /**
    * A execucao da regra guarda o estado tecnico de entrega em
    * normalizedResult.technicalDelivery. Sem este espelhamento ela ficava
@@ -828,7 +1028,11 @@ export class ConversionEventsService {
     status: SendReadyEventResult["status"];
     errorCode: MetaCapiSendEventErrorCode;
   }): {
-    state: "sent" | "blocked_configuration" | "failed_retryable" | "failed_permanent";
+    state:
+      | "sent"
+      | "blocked_configuration"
+      | "failed_retryable"
+      | "failed_permanent";
     retryable: boolean;
     reasonCode: string | null;
   } {
