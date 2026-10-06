@@ -26,10 +26,10 @@ body {
 
 .sidebar {
   background:
-    linear-gradient(180deg, rgba(18, 184, 132, 0.045), transparent 260px),
+    linear-gradient(180deg, rgba(var(--brand-accent-rgb, 18, 184, 132), 0.045), transparent 260px),
     rgba(5, 10, 9, 0.97);
   box-shadow: 12px 0 34px rgba(0, 0, 0, 0.14);
-  scrollbar-color: rgba(66, 240, 168, 0.28) transparent;
+  scrollbar-color: rgba(var(--brand-accent-rgb, 66, 240, 168), 0.28) transparent;
   scrollbar-gutter: auto;
   scrollbar-width: thin;
 }
@@ -45,12 +45,12 @@ body {
 .sidebar::-webkit-scrollbar-thumb {
   border: 2px solid transparent;
   border-radius: 999px;
-  background: rgba(66, 240, 168, 0.25);
+  background: rgba(var(--brand-accent-rgb, 66, 240, 168), 0.25);
   background-clip: padding-box;
 }
 
 .sidebar:hover::-webkit-scrollbar-thumb {
-  background: rgba(66, 240, 168, 0.44);
+  background: rgba(var(--brand-accent-rgb, 66, 240, 168), 0.44);
   background-clip: padding-box;
 }
 
@@ -89,14 +89,14 @@ body {
 }
 
 .sidebar-nav a.active {
-  border-color: rgba(66, 240, 168, 0.2);
-  background: rgba(18, 184, 132, 0.1);
+  border-color: rgba(var(--brand-accent-rgb, 66, 240, 168), 0.2);
+  background: rgba(var(--brand-accent-rgb, 18, 184, 132), 0.1);
   color: var(--ink);
 }
 
 .sidebar-nav a.active::after {
   background: var(--mint);
-  box-shadow: 0 0 12px rgba(66, 240, 168, 0.45);
+  box-shadow: 0 0 12px rgba(var(--brand-accent-rgb, 66, 240, 168), 0.45);
 }
 
 .sidebar-collapsed .sidebar-navigation {
@@ -405,7 +405,7 @@ body {
 
 .lead-advanced-filters > summary:hover,
 .lead-advanced-filters[open] > summary {
-  background: rgba(66, 240, 168, 0.035);
+  background: rgba(var(--brand-accent-rgb, 66, 240, 168), 0.035);
   color: var(--ink-soft);
 }
 
@@ -657,8 +657,8 @@ body {
 }
 
 .lead-open-action:hover {
-  border-color: rgba(66, 240, 168, 0.35);
-  background: rgba(66, 240, 168, 0.08);
+  border-color: rgba(var(--brand-accent-rgb, 66, 240, 168), 0.35);
+  background: rgba(var(--brand-accent-rgb, 66, 240, 168), 0.08);
   color: var(--mint);
 }
 
@@ -736,9 +736,9 @@ body {
 .overview-funnel-panel {
   padding: 24px 26px 20px;
   overflow: hidden;
-  border-color: rgba(66, 240, 168, 0.22);
+  border-color: rgba(var(--brand-accent-rgb, 66, 240, 168), 0.22);
   background:
-    linear-gradient(180deg, rgba(18, 184, 132, 0.055), transparent 220px),
+    linear-gradient(180deg, rgba(var(--brand-accent-rgb, 18, 184, 132), 0.055), transparent 220px),
     var(--surface);
 }
 
@@ -1054,7 +1054,7 @@ body {
     border: 1px solid var(--border);
     border-radius: 8px;
     background:
-      linear-gradient(180deg, rgba(18, 184, 132, 0.035), transparent 90px),
+      linear-gradient(180deg, rgba(var(--brand-accent-rgb, 18, 184, 132), 0.035), transparent 90px),
       var(--surface);
   }
 
@@ -1159,7 +1159,7 @@ body {
     border: 1px solid var(--border);
     border-radius: 8px;
     background:
-      linear-gradient(180deg, rgba(18, 184, 132, 0.035), transparent 84px),
+      linear-gradient(180deg, rgba(var(--brand-accent-rgb, 18, 184, 132), 0.035), transparent 84px),
       var(--surface);
   }
 
@@ -1466,8 +1466,8 @@ body {
 }
 
 .report-period-form input[type="date"]:focus {
-  border-color: rgba(66, 240, 168, 0.72);
-  box-shadow: 0 0 0 3px rgba(18, 184, 132, 0.16);
+  border-color: rgba(var(--brand-accent-rgb, 66, 240, 168), 0.72);
+  box-shadow: 0 0 0 3px rgba(var(--brand-accent-rgb, 18, 184, 132), 0.16);
 }
 
 .report-period-form input[type="date"]::-webkit-calendar-picker-indicator {
@@ -1583,12 +1583,12 @@ body {
 .report-selection-filter:hover:not(:disabled),
 .report-selection-clear:hover:not(:disabled),
 .report-selection-filter.is-active {
-  border-color: rgba(66, 240, 168, 0.5);
+  border-color: rgba(var(--brand-accent-rgb, 66, 240, 168), 0.5);
   color: var(--mint);
 }
 
 .report-selection-filter.is-active {
-  background: rgba(18, 184, 132, 0.1);
+  background: rgba(var(--brand-accent-rgb, 18, 184, 132), 0.1);
   box-shadow: inset 0 -2px 0 var(--mint);
 }
 
@@ -1700,8 +1700,8 @@ body {
 .report-advanced-filters[open] > summary {
   width: fit-content;
   margin: 10px 0 0 auto;
-  border-color: rgba(66, 240, 168, 0.34);
-  background: rgba(18, 184, 132, 0.04);
+  border-color: rgba(var(--brand-accent-rgb, 66, 240, 168), 0.34);
+  background: rgba(var(--brand-accent-rgb, 18, 184, 132), 0.04);
 }
 
 .report-filter-advanced-grid {
@@ -1953,7 +1953,7 @@ body {
 }
 
 .report-selection-checkbox input:focus-visible + span {
-  outline: 2px solid rgba(66, 240, 168, 0.22);
+  outline: 2px solid rgba(var(--brand-accent-rgb, 66, 240, 168), 0.22);
   outline-offset: 2px;
 }
 
@@ -1961,7 +1961,7 @@ body {
 .report-selection-checkbox input:indeterminate + span {
   border-color: var(--mint);
   background: var(--mint);
-  box-shadow: 0 0 0 2px rgba(66, 240, 168, 0.1);
+  box-shadow: 0 0 0 2px rgba(var(--brand-accent-rgb, 66, 240, 168), 0.1);
 }
 
 .report-selection-checkbox input:checked + span::after {
@@ -1992,7 +1992,7 @@ body {
   tbody
   tr:has(.report-row-selector input:checked)
   td {
-  background: rgba(18, 184, 132, 0.045);
+  background: rgba(var(--brand-accent-rgb, 18, 184, 132), 0.045);
 }
 
 .reports-page
@@ -2205,12 +2205,12 @@ body {
     border: 1px solid var(--border);
     border-radius: 8px;
     background:
-      linear-gradient(180deg, rgba(18, 184, 132, 0.035), transparent 88px),
+      linear-gradient(180deg, rgba(var(--brand-accent-rgb, 18, 184, 132), 0.035), transparent 88px),
       var(--surface);
   }
 
   .reports-page .performance-table tbody tr.is-selected {
-    border-color: rgba(66, 240, 168, 0.52);
+    border-color: rgba(var(--brand-accent-rgb, 66, 240, 168), 0.52);
     box-shadow: inset 3px 0 0 var(--mint);
   }
 
@@ -2291,7 +2291,7 @@ body {
   }
 
   .reports-page .performance-table tfoot td {
-    background: rgba(18, 184, 132, 0.035);
+    background: rgba(var(--brand-accent-rgb, 18, 184, 132), 0.035);
   }
 
   .reports-page .performance-table tfoot .summary-name {
@@ -2386,9 +2386,9 @@ body {
   height: 36px;
   flex: 0 0 36px;
   place-items: center;
-  border: 1px solid rgba(66, 240, 168, 0.25);
+  border: 1px solid rgba(var(--brand-accent-rgb, 66, 240, 168), 0.25);
   border-radius: 7px;
-  background: rgba(66, 240, 168, 0.055);
+  background: rgba(var(--brand-accent-rgb, 66, 240, 168), 0.055);
   color: var(--mint);
 }
 
@@ -2468,8 +2468,8 @@ body {
 }
 
 .audit-filter-form input[type="date"]:focus {
-  border-color: rgba(66, 240, 168, 0.72);
-  box-shadow: 0 0 0 3px rgba(18, 184, 132, 0.16);
+  border-color: rgba(var(--brand-accent-rgb, 66, 240, 168), 0.72);
+  box-shadow: 0 0 0 3px rgba(var(--brand-accent-rgb, 18, 184, 132), 0.16);
 }
 
 .audit-filter-form input[type="date"]::-webkit-calendar-picker-indicator {
@@ -2540,8 +2540,8 @@ body {
 .audit-advanced-filters[open] > summary {
   width: fit-content;
   margin: 10px 0 0 auto;
-  border-color: rgba(66, 240, 168, 0.34);
-  background: rgba(18, 184, 132, 0.04);
+  border-color: rgba(var(--brand-accent-rgb, 66, 240, 168), 0.34);
+  background: rgba(var(--brand-accent-rgb, 18, 184, 132), 0.04);
 }
 
 .audit-filter-grid {
@@ -2976,7 +2976,7 @@ body {
     border: 1px solid var(--border);
     border-radius: 8px;
     background:
-      linear-gradient(180deg, rgba(18, 184, 132, 0.035), transparent 100px),
+      linear-gradient(180deg, rgba(var(--brand-accent-rgb, 18, 184, 132), 0.035), transparent 100px),
       var(--surface);
   }
 
@@ -3263,7 +3263,7 @@ body {
 }
 
 .integration-overview-icon.whatsapp {
-  border-color: rgba(66, 240, 168, 0.3);
+  border-color: rgba(var(--brand-accent-rgb, 66, 240, 168), 0.3);
   color: var(--mint);
 }
 
@@ -3463,7 +3463,7 @@ body {
 .meta-configured-structures > summary:hover,
 .meta-configured-structures > summary:focus-visible {
   outline: 0;
-  background: rgba(66, 240, 168, 0.045);
+  background: rgba(var(--brand-accent-rgb, 66, 240, 168), 0.045);
 }
 
 .meta-configured-structures > summary > span:nth-child(2) {
@@ -4310,8 +4310,8 @@ body {
 .legacy-rule-adapt-grid input:focus,
 .legacy-rule-adapt-grid select:focus,
 .legacy-rule-adapt-grid textarea:focus {
-  border-color: rgba(66, 240, 168, 0.72);
-  box-shadow: 0 0 0 3px rgba(18, 184, 132, 0.16);
+  border-color: rgba(var(--brand-accent-rgb, 66, 240, 168), 0.72);
+  box-shadow: 0 0 0 3px rgba(var(--brand-accent-rgb, 18, 184, 132), 0.16);
 }
 
 .legacy-rule-adapt-grid small {
