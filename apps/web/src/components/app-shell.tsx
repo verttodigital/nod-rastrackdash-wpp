@@ -252,8 +252,8 @@ export function AppShell({
 
   return (
     <div
-      className={`app-shell${sidebarCollapsed ? " sidebar-collapsed" : ""}${mobileMenuOpen ? " mobile-menu-open" : ""}`}
-      data-sidebar-state={sidebarCollapsed ? "collapsed" : "expanded"}
+      className={`app-shell${sidebarCollapsed && !isMobile ? " sidebar-collapsed" : ""}${mobileMenuOpen ? " mobile-menu-open" : ""}`}
+      data-sidebar-state={sidebarCollapsed && !isMobile ? "collapsed" : "expanded"}
     >
       <header className="mobile-shell-header">
         <Link
