@@ -50,8 +50,11 @@ COPY . .
 # Optional fallback for builds without git metadata (archive/tarball). It never
 # overrides the commit read from a git checkout.
 ARG GIT_SHA=
+ARG SOURCE_COMMIT=
 
-RUN GIT_SHA="${GIT_SHA}" node scripts/resolve-build-identity.mjs /src /identity/build-identity.json \
+# Coolify removes .git before building and supplies the actual checkout SHA
+# as SOURCE_COMMIT when "Include Source Commit in Build" is enabled.
+RUN GIT_SHA="${GIT_SHA:-${SOURCE_COMMIT}}" node scripts/resolve-build-identity.mjs /src /identity/build-identity.json \
   && rm -rf /src/.git
 
 FROM deps AS build

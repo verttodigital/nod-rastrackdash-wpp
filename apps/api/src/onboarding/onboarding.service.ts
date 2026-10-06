@@ -26,7 +26,12 @@ export class OnboardingService {
   ) {}
 
   async getStatus(authenticated: AuthenticatedUser): Promise<OnboardingStatusDto> {
-    const hasWorkspace = authenticated.workspaces.length > 0;
+    // Support access is resolved by AuthService without adding memberships.
+    const hasSupportWorkspace =
+      (authenticated.user.platformRole === "platform_owner" ||
+        authenticated.user.platformRole === "platform_operator") &&
+      Boolean(authenticated.supportContext);
+    const hasWorkspace = authenticated.workspaces.length > 0 || hasSupportWorkspace;
     const [database, licenseActive, metaConnected] = await Promise.all([
       this.checkDatabase(),
       this.checkLicense(),
@@ -67,8 +72,26 @@ export class OnboardingService {
 
     try {
       const workspace = this.workspaces.getCurrentWorkspace(authenticated);
-      const connection = await this.integrations.getMetaConnection(workspace.id);
-      return connection.status === "connected";
+      const [legacy, manual] = await Promise.allSettled([
+        this.integrations.getMetaConnection(workspace.id),
+        this.prisma.metaBusinessConnection.findFirst({
+          where: {
+            workspaceId: workspace.id,
+            status: "active",
+            credential: {
+              workspaceId: workspace.id,
+              source: "manual",
+              status: "active",
+              OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+            },
+          },
+          select: { id: true },
+        }),
+      ]);
+      return (
+        (legacy.status === "fulfilled" && legacy.value.status === "connected") ||
+        (manual.status === "fulfilled" && manual.value !== null)
+      );
     } catch {
       // No active workspace, permission issue, or Meta API hiccup — none of
       // these should block the rest of the checklist from rendering.

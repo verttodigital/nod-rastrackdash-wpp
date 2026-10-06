@@ -7,7 +7,7 @@ import type { OnboardingStatusDto } from "./onboarding.types";
 /**
  * Auth-required onboarding checklist (F6.3) — reuses the existing session
  * so `hasWorkspace`/`metaConnected` reflect the caller's real workspace
- * membership. Soft signal only: never blocks the app, no write actions.
+ * membership or platform support context. Soft signal only: no write actions.
  */
 @Controller("onboarding")
 export class OnboardingController {
