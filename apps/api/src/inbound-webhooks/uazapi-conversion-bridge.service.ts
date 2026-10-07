@@ -5,6 +5,7 @@ const PARSER_VERSION = "v1";
 
 export type UazapiBridgeInstance = {
   id: string;
+  provider?: string;
   workspaceId: string;
   name: string;
   providerInstanceId: string | null;
