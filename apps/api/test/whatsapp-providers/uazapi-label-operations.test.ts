@@ -160,6 +160,42 @@ describe("connection-scoped label operations", () => {
       limit: 2,
     });
   });
+  it("resolves compound membership only through this connection's catalog", async () => {
+    const { service, fetchImpl } = fixture([
+      {
+        chats: [
+          {
+            wa_chatid: chatId,
+            wa_label: '["5511777777777:10","external","5511666666666:10"]',
+          },
+        ],
+      },
+      [{ id: "5511777777777:10", labelid: "10", name: "N1" }],
+    ]);
+    expect(await service.readChatLabels("w", "i", phone)).toMatchObject({
+      labelIds: ["10", "external", "5511666666666:10"],
+    });
+    expect(fetchImpl.mock.calls.map(([url]) => new URL(url).pathname)).toEqual([
+      "/chat/find",
+      "/labels",
+    ]);
+    expect(
+      fetchImpl.mock.calls.every(
+        ([, init]) => init.headers.token === "connection-only",
+      ),
+    ).toBe(true);
+  });
+  it("paces every request needed to verify compound membership", async () => {
+    const { service, fetchImpl } = fixture([
+      { chats: [{ wa_chatid: chatId, wa_label: ["5511777777777:10"] }] },
+      [{ id: "5511777777777:10", labelid: "10", name: "N1" }],
+    ]);
+    const callsAtHooks: number[] = [];
+    await service.readChatLabels("w", "i", phone, async () => {
+      callsAtHooks.push(fetchImpl.mock.calls.length);
+    });
+    expect(callsAtHooks).toEqual([0, 1]);
+  });
   it.each([
     { wa_chatid: "5511888888888@s.whatsapp.net", wa_label: [] },
     { wa_chatid: chatId },

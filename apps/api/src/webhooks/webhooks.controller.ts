@@ -1052,6 +1052,7 @@ export class WebhooksController {
           name: true,
           providerInstanceId: true,
           providerTokenEncrypted: true,
+          provider: true,
           providerTokenIv: true,
           providerTokenTag: true,
         },

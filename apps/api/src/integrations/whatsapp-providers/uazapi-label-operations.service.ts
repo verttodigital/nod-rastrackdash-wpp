@@ -24,6 +24,7 @@ export class UazapiLabelOperationError extends Error {
 }
 
 type Label = { id: string; name: string };
+type CatalogLabel = Label & { membershipId?: string };
 const object = (value: unknown): Record<string, unknown> | null =>
   value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -49,14 +50,16 @@ export class UazapiLabelOperationsService {
     workspaceId: string,
     whatsappInstanceId: string,
   ): Promise<Label[]> {
-    return this.readCatalog(workspaceId, whatsappInstanceId);
+    return (await this.readCatalog(workspaceId, whatsappInstanceId)).map(
+      ({ id, name }) => ({ id, name }),
+    );
   }
 
   private async readCatalog(
     workspaceId: string,
     whatsappInstanceId: string,
     beforeRequest?: () => Promise<void>,
-  ): Promise<Label[]> {
+  ): Promise<CatalogLabel[]> {
     const payload = await this.request(
       workspaceId,
       whatsappInstanceId,
@@ -72,11 +75,41 @@ export class UazapiLabelOperationsService {
       const id = row && (nonempty(row.labelid) ? row.labelid : row.id);
       if (!row || !nonempty(id) || !nonempty(row.name))
         throw new UazapiLabelOperationError("label_catalog_invalid");
-      return { id: id.trim(), name: row.name };
+      const canonicalId = id.trim();
+      const membershipId =
+        nonempty(row.id) &&
+        row.id.includes(":") &&
+        row.id.endsWith(`:${canonicalId}`)
+          ? row.id.trim()
+          : undefined;
+      return { id: canonicalId, name: row.name, membershipId };
     });
     if (new Set(labels.map((label) => label.id)).size !== labels.length)
       throw new UazapiLabelOperationError("label_catalog_ambiguous");
     return labels;
+  }
+
+  async normalizeLabelIds(
+    workspaceId: string,
+    whatsappInstanceId: string,
+    labelIds: string[],
+    beforeRequest?: () => Promise<void>,
+  ): Promise<string[]> {
+    const ids = [...new Set(labelIds.map((id) => id.trim()).filter(Boolean))];
+    if (!ids.some((id) => id.includes(":"))) return ids;
+    // The authenticated connection's catalog is the authority for an alias.
+    // Never strip arbitrary prefixes: another instance may reuse the short ID.
+    const catalog = await this.readCatalog(
+      workspaceId,
+      whatsappInstanceId,
+      beforeRequest,
+    );
+    const aliases = new Map(
+      catalog
+        .filter((label) => label.membershipId)
+        .map((label) => [label.membershipId!, label.id]),
+    );
+    return [...new Set(ids.map((id) => aliases.get(id) ?? id))];
   }
 
   async ensureCatalogLabel(
@@ -93,7 +126,9 @@ export class UazapiLabelOperationsService {
       );
       if (matches.length > 1)
         throw new UazapiLabelOperationError("label_name_ambiguous");
-      return matches[0];
+      return matches[0]
+        ? { id: matches[0].id, name: matches[0].name }
+        : undefined;
     };
     const existing = find(
       await this.readCatalog(workspaceId, whatsappInstanceId, beforeRequest),
@@ -129,6 +164,7 @@ export class UazapiLabelOperationsService {
     workspaceId: string,
     whatsappInstanceId: string,
     number: string,
+    beforeRequest?: () => Promise<void>,
   ): Promise<{
     chatId: string;
     phone: string | null;
@@ -149,6 +185,7 @@ export class UazapiLabelOperationsService {
           offset: 0,
           compact: true,
         },
+        beforeRequest,
       ),
     );
     if (!payload || !Array.isArray(payload.chats))
@@ -177,7 +214,16 @@ export class UazapiLabelOperationsService {
       /^[1-9]\d{0,29}@lid$/u.test(chat.wa_chatlid)
         ? chat.wa_chatlid
         : null;
-    return { ...identity, labelIds: membership.labelIds, lid };
+    return {
+      ...identity,
+      labelIds: await this.normalizeLabelIds(
+        workspaceId,
+        whatsappInstanceId,
+        membership.labelIds,
+        beforeRequest,
+      ),
+      lid,
+    };
   }
 
   async addChatLabel(

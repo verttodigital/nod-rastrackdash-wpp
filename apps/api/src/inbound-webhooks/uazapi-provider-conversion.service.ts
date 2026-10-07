@@ -105,6 +105,8 @@ export type UazapiLabelInput = {
   occurredAt?: Date;
   /** Internal only: persisted, scoped publication stage, never read from webhook input. */
   reportStageId?: string;
+  /** Internal report processor's pacing and lease fence for catalog requests. */
+  beforeLabelRequest?: () => Promise<void>;
 };
 
 /**
@@ -447,12 +449,11 @@ export class UazapiProviderConversionService {
   ): Promise<UazapiTeamMessageResult> {
     const config = parseInboundWebhooksConfig(this.env);
     const phone = input.phone.trim();
-    const labelIds = [
-      ...new Set(input.labelIds.map((label) => label.trim()).filter(Boolean)),
-    ];
     if (!config.enabled || !config.conversionRulesEnabled || !phone) {
       return { evaluated: false, eligibleExecutionId: null };
     }
+    const labelIds = await this.normalizeLabels(input, input.labelIds);
+    input = { ...input, labelIds };
     const contactKey = input.waChatId?.trim() || hashPhoneIdentity(phone);
     if (!contactKey) return { evaluated: false, eligibleExecutionId: null };
     const previous = await this.prisma.uazapiChatLabelState.findUnique({
@@ -465,7 +466,9 @@ export class UazapiProviderConversionService {
       },
       select: { labelIds: true },
     });
-    const previousIds = new Set(previous?.labelIds ?? []);
+    const previousIds = new Set(
+      await this.normalizeLabels(input, previous?.labelIds ?? []),
+    );
     const newIds = labelIds.filter((id) => !previousIds.has(id));
     await this.prisma.uazapiChatLabelState.upsert({
       where: {
@@ -549,6 +552,7 @@ export class UazapiProviderConversionService {
         rule,
         reportContext ? [reportContext.labelId!] : newIds,
         catalog,
+        input.instance.provider === "uazapi_byo",
       );
       if (!matched) continue;
 
@@ -616,6 +620,21 @@ export class UazapiProviderConversionService {
     return { evaluated, eligibleExecutionId };
   }
 
+  private async normalizeLabels(input: UazapiLabelInput, ids: string[]) {
+    if (
+      input.instance.provider === "uazapi_byo" &&
+      this.labelOperations &&
+      ids.some((id) => id.includes(":"))
+    )
+      return this.labelOperations.normalizeLabelIds(
+        input.workspaceId,
+        input.instance.id,
+        ids,
+        input.beforeLabelRequest,
+      );
+    return [...new Set(ids.map((id) => id.trim()).filter(Boolean))];
+  }
+
   async evaluatePublishedLabels(input: UazapiLabelInput): Promise<void> {
     const config = readSyncConfig(this.env);
     if (
@@ -625,6 +644,10 @@ export class UazapiProviderConversionService {
       !config.bindings.some((b) => b.whatsappInstanceId === input.instance.id)
     )
       return;
+    input = {
+      ...input,
+      labelIds: await this.normalizeLabels(input, input.labelIds),
+    };
     const stages = await this.prisma.reportSyncStage.findMany({
       where: {
         sourceId: config.sourceId,
@@ -1107,10 +1130,11 @@ export class UazapiProviderConversionService {
     rule: Rule,
     newIds: string[],
     catalog: Array<{ name: string; keys: string[] }>,
+    canonicalIdsOnly = false,
   ): { id: string; name: string; matchKeys: string[] } | null {
     const stored = this.storedLabels(rule.conversionRule.defaultItems);
     for (const id of newIds) {
-      const keys = this.labelKeys(id);
+      const keys = canonicalIdsOnly ? [id.trim()] : this.labelKeys(id);
       const catalogName = catalog.find((label) =>
         label.keys.some((key) => keys.includes(key)),
       )?.name;

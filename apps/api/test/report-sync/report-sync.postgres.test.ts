@@ -120,6 +120,7 @@ describe.skipIf(!url)(
         const path = new URL(String(input)).pathname;
         const token = new Headers(init?.headers).get("token");
         const prefix = token === "second" ? "1" : "";
+        const owner = token === "second" ? "5511777777777" : "5511666666666";
         const data = init?.body ? JSON.parse(String(init.body)) : {};
         const chatId = String(data.wa_chatid ?? data.number ?? phone)
           .replace(/^=/, "")
@@ -135,16 +136,16 @@ describe.skipIf(!url)(
         }
         if (path === "/labels")
           return Response.json([
-            { id: prefix + "1", name: "N1" },
-            { id: prefix + "2", name: "N2" },
-            { id: prefix + "3", name: "Agendamento" },
+            { id: owner + ":" + prefix + "1", labelid: prefix + "1", name: "N1" },
+            { id: owner + ":" + prefix + "2", labelid: prefix + "2", name: "N2" },
+            { id: owner + ":" + prefix + "3", labelid: prefix + "3", name: "Agendamento" },
           ]);
         if (path === "/chat/find")
           return Response.json({
             chats: [
               {
                 wa_chatid: `${chatId}@s.whatsapp.net`,
-                wa_label: JSON.stringify([...state]),
+                wa_label: JSON.stringify([...state].map((id) => /^[0-9]+$/.test(id) ? owner + ":" + id : id)),
               },
             ],
             pagination: { totalRecords: 1 },

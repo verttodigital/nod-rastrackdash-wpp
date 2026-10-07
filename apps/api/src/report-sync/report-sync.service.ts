@@ -148,14 +148,18 @@ export class ReportSyncService {
   private async observe(id: string, c: SyncConfig) {
     try {
       const context = await this.resolve(id, c);
-      const wait = await this.repo.reserve(context.binding.whatsappInstanceId);
-      if (wait > 10000) throw new SyncBlocked("observation_rate_limited");
-      if (wait) await new Promise((resolve) => setTimeout(resolve, wait));
       // Observation is read-only: resolve identity and inspect actual labels.
       const labels = await this.labels.readChatLabels(
         c.workspaceId,
         context.binding.whatsappInstanceId,
         context.phone,
+        async () => {
+          const wait = await this.repo.reserve(
+            context.binding.whatsappInstanceId,
+          );
+          if (wait > 10000) throw new SyncBlocked("observation_rate_limited");
+          if (wait) await new Promise((resolve) => setTimeout(resolve, wait));
+        },
       );
       if (labels.phone !== context.phone)
         throw new SyncBlocked("provider_identity_conflict");
@@ -287,12 +291,11 @@ export class ReportSyncService {
         where: { id: binding.whatsappInstanceId },
       });
       const read = async () => {
-        const state = await call(() =>
-          this.labels.readChatLabels(
-            c.workspaceId,
-            binding.whatsappInstanceId,
-            phone,
-          ),
+        const state = await this.labels.readChatLabels(
+          c.workspaceId,
+          binding.whatsappInstanceId,
+          phone,
+          () => call(async () => undefined),
         );
         if (state.phone !== phone)
           throw new SyncBlocked("provider_identity_conflict");
@@ -376,6 +379,7 @@ export class ReportSyncService {
           labelIds: state.labelIds,
           waChatId: state.chatId,
           reportStageId: stage.id,
+          beforeLabelRequest: () => call(async () => undefined),
         });
         const execution =
           await this.repo.db.providerConversionRuleExecution.findFirst({
